@@ -1,8 +1,8 @@
+output/
 tcx_files/
 venv/
-##
-## Other standard github.com provided Python .gitignore entries
-##
+# github standard python .gitignores
+# ----------------------------------
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
