@@ -23,6 +23,7 @@ def diagnostic_print_list(title, items):
 
     return items
 
+
 def diagnostic_make_plot(window_title, x, x_title, *args):
     """
     Create a plot with one X-axis and multiple Y-axes.
@@ -31,17 +32,17 @@ def diagnostic_make_plot(window_title, x, x_title, *args):
         window_title (str): Title for the plot window/tab.
         x (list): The X-axis data.
         x_title (str): Label for the X-axis.
-        *args: Alternating Y-axis data, color, and title (e.g., y1, y1_color, y1_title, y2, y2_color, y2_title, ...).
+        *args: Alternating Y-axis data, title, and color (e.g., y1, y1_title, y1_color, y2, y2_title, y2_color, ...).
     """
     if len(args) % 3 != 0:
-        raise ValueError("Each Y-axis data series must have a corresponding color and title.")
+        raise ValueError("Each Y-axis data series must have a corresponding title and color.")
 
     # Create the figure and the first Y-axis
     fig, ax1 = plt.subplots(figsize=(10, 6))
     fig.canvas.manager.set_window_title(window_title)
 
     # Plot the first Y-axis
-    y1, y1_color, y1_title = args[0], args[1], args[2]
+    y1, y1_title, y1_color = args[0], args[1], args[2]
     ax1.plot(x, y1, label=y1_title, color=y1_color)
     ax1.set_xlabel(x_title, color="black")
     ax1.set_ylabel(y1_title, color=y1_color)
@@ -52,8 +53,8 @@ def diagnostic_make_plot(window_title, x, x_title, *args):
     axes = [ax1]
     for i in range(3, len(args), 3):
         y_data = args[i]
-        y_color = args[i + 1]
-        y_title = args[i + 2]
+        y_title = args[i + 1]
+        y_color = args[i + 2]
         ax = ax1.twinx()  # Create a new Y-axis
         ax.spines['right'].set_position(('outward', 60 * ((i // 3) - 1)))  # Offset each additional Y-axis
         ax.plot(x, y_data, label=y_title, color=y_color)
@@ -298,9 +299,8 @@ if __name__ == "__main__":
 
     diagnostic_make_plot(
         "Trackpoint Elevation Profile",
-        [tp['DistanceMeters'] for tp in trackpoints],
-        "Distance (meters)",
-        [tp['AltitudeMeters'] for tp in trackpoints], "blue", "Elevation (meters)"
+        [tp['DistanceMeters'] for tp in trackpoints], "Distance (meters)",
+        [tp['AltitudeMeters'] for tp in trackpoints], "Elevation (meters)", "blue"
     )
 
     adjacent_trackpoints = window(trackpoints, 2)
@@ -323,38 +323,38 @@ if __name__ == "__main__":
         "Adjacent TP Elevation Deltas",
         [bs[seg_start_distance] for bs in base_segments],   "Distance (meters)",
         [bs[seg_start_elevation] 
-         - bs[seg_end_elevation] for bs in base_segments],  "blue", "Delta Elevation (meters)"
+         - bs[seg_end_elevation] for bs in base_segments],  "Delta Elevation (meters)", "blue"
     )
 
     diagnostic_make_plot(
         "Adjacent TP Comparing Distance Techniques",
         [bs[seg_start_distance] for bs in base_segments],           "Distance",
-        [bs[seg_haversine_distance] for bs in base_segments],       "blue", "Haversine Distance",
-        [bs[seg_tp_distance] for bs in base_segments],              "red", "TP Distance",
+        [bs[seg_haversine_distance] for bs in base_segments],       "Haversine Distance",   "blue",
+        [bs[seg_tp_distance] for bs in base_segments],              "TP Distance",          "red",
         [pct_diff(bs[seg_haversine_distance], 
-                  bs[seg_tp_distance]) for bs in base_segments],    "green", "% Dist Diff"
+                  bs[seg_tp_distance]) for bs in base_segments],    "% Dist Diff",          "green", 
     )
 
     diagnostic_make_plot(
         "Elevation and Grade Profile",
         [bs[seg_start_distance] for bs in base_segments],                           "Distance (meters)",
-        [bs[seg_start_elevation] - bs[seg_end_elevation] for bs in base_segments],  "blue", "Delta Elevation (meters)",
-        [bs[seg_start_elevation] for bs in base_segments],                          "red", "Start Elevation (meters)"
+        [bs[seg_start_elevation] - bs[seg_end_elevation] for bs in base_segments],  "Delta Elevation (meters)", "blue", 
+        [bs[seg_start_elevation] for bs in base_segments],                          "Start Elevation (meters)", "red", 
     )
 
     diagnostic_make_plot(
         "Two Y-Axes Example",
-        [1, 2, 3, 4, 5],                "X-Axis",
-        [50, 40, 30, 20, 10],   "blue", "Y1 (Blue)",
-        [5, 15, 25, 35, 45],    "red",  "Y2 (Red)"
+        [1, 2, 3, 4, 5],        "X-Axis",
+        [50, 40, 30, 20, 10],   "Y1 (Blue)",    "blue", 
+        [5, 15, 25, 35, 45],    "Y2 (Red)",     "red",  
     )
 
     diagnostic_make_plot(
         "Three Y-Axes Example",
-        [ 1,  2,  3,  4,  5],            "X-Axis",
-        [50, 40, 30, 20, 10],   "blue",  "Y1 (Blue)",
-        [ 5, 15, 25, 35, 45],   "green", "Y2 (Green)",
-        [ 1,  1,  1,  1,  1],   "orange","Y3 (Orange)"
+        [ 1,  2,  3,  4,  5],   "X-Axis",
+        [50, 40, 30, 20, 10],   "Y1 (Blue)",    "red",  
+        [ 5, 15, 25, 35, 45],   "Y2 (Green)",   "green", 
+        [ 1,  1,  1,  1,  1],   "Y3 (Orange)",  "orange",
     )
 
     plt.show()
