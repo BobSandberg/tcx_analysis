@@ -66,8 +66,6 @@ def diagnostic_make_plot(window_title, x, x_title, *args):
     for ax in axes:
         ax.legend(loc="upper left")
 
-    plt.show()
-
 
 def pct_diff(x,y):
     """
@@ -311,7 +309,7 @@ if __name__ == "__main__":
     base_segments = compute_base_segments(adjacent_trackpoints)
     base_segments = diagnostic_print_list("Base Segments", base_segments)
 
-    # 
+    # Easy Reference to Tuple positions for base_segments Tuple
     seg_start_distance = 0
     seg_end_distance = 1
     seg_haversine_distance = 2
@@ -320,7 +318,6 @@ if __name__ == "__main__":
     seg_end_elevation = 5
     seg_elevation = 6
     seg_grade = 7
-
 
     diagnostic_make_plot(
         "Adjacent TP Elevation Deltas",
@@ -347,19 +344,17 @@ if __name__ == "__main__":
 
     diagnostic_make_plot(
         "Two Y-Axes Example",
-        x=[1, 2, 3, 4, 5],
-        x_title="X-Axis",
-        [10, 20, 30, 40, 50], "blue", "Y1 (Blue)",
-        [5, 15, 25, 35, 45], "red", "Y2 (Red)"
+        [1, 2, 3, 4, 5],                "X-Axis",
+        [50, 40, 30, 20, 10],   "blue", "Y1 (Blue)",
+        [5, 15, 25, 35, 45],    "red",  "Y2 (Red)"
     )
 
     diagnostic_make_plot(
         "Three Y-Axes Example",
-        x=[1, 2, 3, 4, 5],
-        x_title="X-Axis",
-        [10, 20, 30, 40, 50], "blue", "Y1 (Blue)",
-        [5, 15, 25, 35, 45], "red", "Y2 (Red)",
-        [2, 4, 6, 8, 10], "green", "Y3 (Green)"
+        [ 1,  2,  3,  4,  5],            "X-Axis",
+        [50, 40, 30, 20, 10],   "blue",  "Y1 (Blue)",
+        [ 5, 15, 25, 35, 45],   "green", "Y2 (Green)",
+        [ 1,  1,  1,  1,  1],   "orange","Y3 (Orange)"
     )
 
     plt.show()
