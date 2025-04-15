@@ -24,7 +24,7 @@ def diagnostic_print_list(title, items):
     return items
 
 
-def diagnostic_make_plot(window_title, x, x_title, *args):
+def diagnostic_make_plot(window_title, x, x_title, y1, y1_title, y1_color, *args):
     """
     Create a plot with one X-axis and multiple Y-axes.
 
@@ -32,17 +32,20 @@ def diagnostic_make_plot(window_title, x, x_title, *args):
         window_title (str): Title for the plot window/tab.
         x (list): The X-axis data.
         x_title (str): Label for the X-axis.
-        *args: Alternating Y-axis data, title, and color (e.g., y1, y1_title, y1_color, y2, y2_title, y2_color, ...).
+        y1 (list): Data for the first Y-axis.
+        y1_title (str): Title for the first Y-axis.
+        y1_color (str): Color for the first Y-axis.
+        *args: Alternating Y-axis data, title, and color for additional Y-axes 
+               (e.g., y2, y2_title, y2_color, y3, y3_title, y3_color, ...).
     """
     if len(args) % 3 != 0:
-        raise ValueError("Each Y-axis data series must have a corresponding title and color.")
+        raise ValueError("Each additional Y-axis data series must have a corresponding title and color.")
 
     # Create the figure and the first Y-axis
     fig, ax1 = plt.subplots(figsize=(10, 6))
     fig.canvas.manager.set_window_title(window_title)
 
     # Plot the first Y-axis
-    y1, y1_title, y1_color = args[0], args[1], args[2]
     ax1.plot(x, y1, label=y1_title, color=y1_color)
     ax1.set_xlabel(x_title, color="black")
     ax1.set_ylabel(y1_title, color=y1_color)
@@ -51,12 +54,12 @@ def diagnostic_make_plot(window_title, x, x_title, *args):
 
     # Add additional Y-axes if needed
     axes = [ax1]
-    for i in range(3, len(args), 3):
+    for i in range(0, len(args), 3):
         y_data = args[i]
         y_title = args[i + 1]
         y_color = args[i + 2]
         ax = ax1.twinx()  # Create a new Y-axis
-        ax.spines['right'].set_position(('outward', 60 * ((i // 3) - 1)))  # Offset each additional Y-axis
+        ax.spines['right'].set_position(('outward', 60 * (len(axes) - 1)))  # Offset each additional Y-axis
         ax.plot(x, y_data, label=y_title, color=y_color)
         ax.set_ylabel(y_title, color=y_color)
         ax.tick_params(axis='y', labelcolor=y_color)
