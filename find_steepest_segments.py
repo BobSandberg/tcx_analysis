@@ -1,13 +1,40 @@
-import xml.etree.ElementTree as ET
-from math import radians, sin, cos, sqrt, atan2
 import argparse
+from dataclasses import dataclass, field
+from typing import List, Tuple
+from math import radians, sin, cos, sqrt, atan2
+import xml.etree.ElementTree as ET
 import matplotlib.pyplot as plt
 from collections.abc import Iterator
 from itertools import tee, islice
 from tabulate import tabulate
+import csv
+
+@dataclass
+class BaseSegment:
+    start_distance: float
+    end_distance: float
+    haversine_distance: float
+    tp_distance: float
+    start_elevation: float
+    end_elevation: float
+    elevation_change: float
+    grade: float
 
 
-def diagnostic_print_list(title, items):
+@dataclass
+class CommonGradeSegment:
+    base_segments: List[BaseSegment] = field(default_factory=list)
+    start_distance: float = 0.0
+    end_distance: float = 0.0
+    start_elevation: float = 0.0
+    end_elevation: float = 0.0
+    total_distance: float = 0.0
+    altitude_change: float = 0.0
+    average_grade: float = 0.0
+    max_grade: float = 0.0
+
+
+def diagnostic_print_list(title, items, toFile=None):
     """
     Prints a list/iterator of items with a title.
     """
@@ -197,90 +224,182 @@ def compute_trackpoint_deltas(tp1, tp2):
 
 def compute_base_segments(adjacent_trackpoints):
     """
-    Between each two segments compute the delta values
+    Between each two segments compute the delta values.
 
     Args:
-        trackpoints
+        adjacent_trackpoints: Pairs of adjacent trackpoints.
 
     Returns:
-
+        List of BaseSegment objects.
     """
-    return [ compute_trackpoint_deltas(tp1,tp2) for tp1,tp2 in adjacent_trackpoints ]
+    return [
+        BaseSegment(
+            start_distance=tp1['DistanceMeters'],
+            end_distance=tp2['DistanceMeters'],
+            haversine_distance=haversine(
+                tp1['LatitudeDegrees'], tp1['LongitudeDegrees'],
+                tp2['LatitudeDegrees'], tp2['LongitudeDegrees']
+            ),
+            tp_distance=tp2['DistanceMeters'] - tp1['DistanceMeters'],
+            start_elevation=tp1['AltitudeMeters'],
+            end_elevation=tp2['AltitudeMeters'],
+            elevation_change=tp2['AltitudeMeters'] - tp1['AltitudeMeters'],
+            grade=(tp2['AltitudeMeters'] - tp1['AltitudeMeters']) /
+                  (tp2['DistanceMeters'] - tp1['DistanceMeters']) if tp2['DistanceMeters'] - tp1['DistanceMeters'] > 0 else 0.0
+        )
+        for tp1, tp2 in adjacent_trackpoints
+    ]
 
 
-# # Process trackpoints to find steepest segments
-#def find_steepest_segments(trackpoints, namespace, min_distance=50, grade_delta=5, min_grade=7):
-#     segments = []
-#     grades = []  # Store grades for all segments
-#     haversine_distances = []  # Store haversine distances for all segments
-#     dm_distance_meters = []  # Store DistanceMeters values from the TCX file
-#     i = 0
+def merge_segments_by_similar_grade(base_segments: List[BaseSegment], min_distance=30, grade_threshold=1.0, max_segment_length=100):
+    """
+    Merge base segments into common grade segments based on improved criteria.
+
+    Args:
+        base_segments: List of BaseSegment objects.
+        min_distance: Minimum distance (in meters) for a segment to be considered significant.
+        grade_threshold: Maximum grade difference to merge segments.
+        max_segment_length: Maximum length of a common grade segment.
+
+    Returns:
+        List of CommonGradeSegment objects.
+    """
+    common_grade_segments = []
+    current_segment = None
+
+    for segment in base_segments:
+        # If no current segment, start a new one
+        if current_segment is None:
+            current_segment = CommonGradeSegment(
+                base_segments=[segment],
+                start_distance=segment.start_distance,
+                end_distance=segment.end_distance,
+                start_elevation=segment.start_elevation,
+                end_elevation=segment.end_elevation,
+                total_distance=segment.haversine_distance,
+                altitude_change=segment.elevation_change,
+                average_grade=segment.grade,
+                max_grade=segment.grade,
+            )
+            continue
+
+        # Calculate the grade difference and check if the segment can be merged
+        grade_diff = abs(current_segment.average_grade - segment.grade)
+        if grade_diff <= grade_threshold and current_segment.total_distance + segment.haversine_distance <= max_segment_length:
+            current_segment.base_segments.append(segment)
+            current_segment.end_distance = segment.end_distance
+            current_segment.end_elevation = segment.end_elevation
+            current_segment.total_distance += segment.haversine_distance
+            current_segment.altitude_change += segment.elevation_change
+            current_segment.max_grade = max(current_segment.max_grade, segment.grade)
+            current_segment.average_grade = (
+                current_segment.altitude_change / current_segment.total_distance
+            )
+        else:
+            # Finalize the current segment if it meets the minimum distance
+            if current_segment.total_distance >= min_distance:
+                common_grade_segments.append(current_segment)
+            # Start a new segment
+            current_segment = CommonGradeSegment(
+                base_segments=[segment],
+                start_distance=segment.start_distance,
+                end_distance=segment.end_distance,
+                start_elevation=segment.start_elevation,
+                end_elevation=segment.end_elevation,
+                total_distance=segment.haversine_distance,
+                altitude_change=segment.elevation_change,
+                average_grade=segment.grade,
+                max_grade=segment.grade,
+            )
+
+    # Add the last segment if it meets the minimum distance
+    if current_segment and current_segment.total_distance >= min_distance:
+        common_grade_segments.append(current_segment)
+
+    return common_grade_segments
 
 
-#     while i < len(trackpoints):
-#         cumulative_haversine_distance = 0
-#         cumulative_dm_distance = 0
-#         cumulative_altitude_change = 0
-#         max_grade = 0
-#         start_point = trackpoints[i]
-#         altitude_start = float(start_point.find("ns:AltitudeMeters", namespace).text)
-#         lat_start = float(start_point.find("ns:Position/ns:LatitudeDegrees", namespace).text)
-#         lon_start = float(start_point.find("ns:Position/ns:LongitudeDegrees", namespace).text)
+def summarize_common_grade_segments(common_grade_segments: List[CommonGradeSegment]):
+    """
+    Summarize the common grade segments by sorting them based on the number of base segments.
 
-#         # Extract DistanceMeters for the starting point
-#         tmp = start_point.find("ns:DistanceMeters", namespace)
-#         if tmp is not None:
-#             dm_distance_start = float(tmp.text)
-#         else:
-#             dm_distance_start = 0
+    Args:
+        common_grade_segments: List of CommonGradeSegment objects.
+    """
+    # Sort the segments by the number of base_segments in reverse order
+    sorted_segments = sorted(
+        common_grade_segments,
+        key=lambda seg: len(seg.base_segments),
+        reverse=True
+    )
 
-#         for j in range(i + 1, len(trackpoints)):
-#             end_point = trackpoints[j]
-#             altitude_end = float(end_point.find("ns:AltitudeMeters", namespace).text)
-#             lat_end = float(end_point.find("ns:Position/ns:LatitudeDegrees", namespace).text)
-#             lon_end = float(end_point.find("ns:Position/ns:LongitudeDegrees", namespace).text)
+    # Calculate totals
+    total_common_segments = len(common_grade_segments)
+    total_base_segments = sum(len(seg.base_segments) for seg in common_grade_segments)
 
-#             haversine_distance = haversine(lat_start, lon_start, lat_end, lon_end)
-#             cumulative_haversine_distance += haversine_distance
-#             delta_altitude = altitude_end - altitude_start
-#             grade = (delta_altitude / cumulative_haversine_distance) * 100 if cumulative_haversine_distance > 0 else 0
-#             max_grade = max(max_grade, abs(grade))
+    # Print the summary
+    print("\nSummary of Common Grade Segments (sorted by number of base segments):")
+    print(f"Total Common Grade Segments: {total_common_segments}")
+    print(f"Total Base Segments: {total_base_segments}")
+    print(f"{'Index':<6}{'Start Distance (m)':<20}{'Avg Grade (%)':<15}{'Max Grade (%)':<15}{'# Base Segments':<15}")
+    print("-" * 70)
 
-#             # Store the grade and haversine distance for this segment
-#             grades.append(grade)
-#             haversine_distances.append(cumulative_haversine_distance)
+    for idx, segment in enumerate(sorted_segments):
+        print(
+            f"{idx:<6}{segment.start_distance:<20.2f}{segment.average_grade:<15.2f}"
+            f"{segment.max_grade:<15.2f}{len(segment.base_segments):<15}"
+        )
 
-#             # Extract DistanceMeters for the ending point
-#             dm_distance_end = end_point.find("ns:DistanceMeters", namespace)
-#             if dm_distance_end is not None:
-#                 dm_distance_end = float(dm_distance_end.text)
-#             else:
-#                 dm_distance_end = 0
 
-#             dm_distance_meters.append(dm_distance_end - dm_distance_start)
 
-#             if cumulative_haversine_distance >= min_distance:
-#                 if segments and abs(segments[-1]["average_grade"] - grade) <= grade_delta:
-#                     segments[-1]["end_point"] = (lat_end, lon_end)
-#                     segments[-1]["distance"] += cumulative_haversine_distance
-#                     segments[-1]["altitude_change"] += delta_altitude
-#                     segments[-1]["max_grade"] = max(segments[-1]["max_grade"], max_grade)
-#                     segments[-1]["average_grade"] = (segments[-1]["altitude_change"] / segments[-1]["distance"]) * 100
-#                 else:
-#                     if grade >= min_grade:  # Only add segments that meet the minimum grade
-#                         segments.append({
-#                             "start_point": (lat_start, lon_start),
-#                             "end_point": (lat_end, lon_end),
-#                             "distance": cumulative_haversine_distance,
-#                             "altitude_change": delta_altitude,
-#                             "average_grade": grade,
-#                             "max_grade": max_grade,
-#                         })
-#                 break
+def plot_common_grade_segments(common_grade_segments):
+    """
+    Add the common grade segments plot to the diagnostic plots window as a separate tab.
 
-#         i += 1
+    Args:
+        common_grade_segments: List of merged segments with aggregated data.
+    """
+    # Create a new figure for the plot
+    fig, ax = plt.subplots(figsize=(12, 6))
+    fig.canvas.manager.set_window_title("Common Grade Segments")
 
-#     return segments, grades, haversine_distances, dm_distance_meters
+    colors = ["blue", "red"]  # Alternating colors
+
+    for i, segment in enumerate(common_grade_segments):
+        # Extract x (distance) and y (elevation) data for the segment
+        x = [bs.start_distance for bs in segment.base_segments] + [ segment.end_distance ]
+        y = [bs.start_elevation for bs in segment.base_segments] + [ segment.end_elevation ]
+
+        # Plot the segment with alternating colors
+        ax.plot(
+            x,
+            y,
+            label=f"Segment {i + 1} (Grade: {segment.average_grade:.1f}%)",
+            color=colors[i % len(colors)],
+        )
+
+        # Annotate the max grade point
+        max_grade_idx = max(
+            range(len(segment.base_segments)),
+            key=lambda idx: segment.base_segments[idx].grade,
+        )
+        max_grade_point = segment.base_segments[max_grade_idx]
+        ax.annotate(
+            f"Max Grade: {max_grade_point.grade:.1f}%",
+            (max_grade_point.start_distance, max_grade_point.start_elevation),
+            textcoords="offset points",
+            xytext=(0, 10),
+            ha="center",
+            color="black",
+            fontsize=8,
+        )
+
+    # Set labels, title, and legend
+    ax.set_xlabel("Distance (meters)")
+    ax.set_ylabel("Elevation (meters)")
+    ax.set_title("Common Grade Segments")
+    ax.legend()
+    ax.grid(True)
 
 
 if __name__ == "__main__":
@@ -298,125 +417,77 @@ if __name__ == "__main__":
 
     # Parse the TCX file
     trackpoints = extract_data_from_trackpoints(tcx_trackpoints, namespace)
-    trackpoints = diagnostic_print_list("Extracted Trackpoints", trackpoints)
+    # trackpoints = diagnostic_print_list("Extracted Trackpoints", trackpoints)
 
-    diagnostic_make_plot(
-        "Trackpoint Elevation Profile",
-        [tp['DistanceMeters'] for tp in trackpoints], "Distance (meters)",
-        [tp['AltitudeMeters'] for tp in trackpoints], "Elevation (meters)", "blue"
-    )
+    # diagnostic_make_plot(
+    #     "Trackpoint Elevation Profile",
+    #     [tp['DistanceMeters'] for tp in trackpoints], "Distance (meters)",
+    #     [tp['AltitudeMeters'] for tp in trackpoints], "Elevation (meters)", "blue"
+    # )
 
     adjacent_trackpoints = window(trackpoints, 2)
-    adjacent_trackpoints = diagnostic_print_list("Adjacent Trackpoints", adjacent_trackpoints)
+    # adjacent_trackpoints = diagnostic_print_list("Adjacent Trackpoints", adjacent_trackpoints)
 
     base_segments = compute_base_segments(adjacent_trackpoints)
-    base_segments = diagnostic_print_list("Base Segments", base_segments)
 
-    # Easy Reference to Tuple positions for base_segments Tuple
-    seg_start_distance = 0
-    seg_end_distance = 1
-    seg_haversine_distance = 2
-    seg_tp_distance = 3
-    seg_start_elevation = 4
-    seg_end_elevation = 5
-    seg_elevation = 6
-    seg_grade = 7
+    base_segments = diagnostic_print_list("Base Segments", base_segments, toFile='base_segments.txt')
 
-    diagnostic_make_plot(
-        "Adjacent TP Elevation Deltas",
-        [bs[seg_start_distance] for bs in base_segments],   "Distance (meters)",
-        [bs[seg_start_elevation] 
-         - bs[seg_end_elevation] for bs in base_segments],  "Delta Elevation (meters)", "blue"
-    )
+    # diagnostic_make_plot(
+    #     "Adjacent TP Elevation Deltas",
+    #     [bs[SEG_START_DIST] for bs in base_segments], "Distance (meters)",
+    #     [bs[SEG_START_ELEV] 
+    #      - bs[SEG_END_ELEV] for bs in base_segments], "Delta Elevation (meters)", "blue"
+    # )
 
-    diagnostic_make_plot(
-        "Adjacent TP Comparing Distance Techniques",
-        [bs[seg_start_distance] for bs in base_segments],           "Distance",
-        [bs[seg_haversine_distance] for bs in base_segments],       "Haversine Distance",   "blue",
-        [bs[seg_tp_distance] for bs in base_segments],              "TP Distance",          "red",
-        [pct_diff(bs[seg_haversine_distance], 
-                  bs[seg_tp_distance]) for bs in base_segments],    "% Dist Diff",          "green", 
-    )
+    # diagnostic_make_plot(
+    #     "Adjacent TP Comparing Distance Techniques",
+    #     [bs[SEG_START_DIST] for bs in base_segments],        "Distance",
+    #     [bs[SEG_HAVERSINE_DIST] for bs in base_segments],    "Haversine Distance",   "blue",
+    #     [bs[SEG_TP_DIST] for bs in base_segments],           "TP Distance",          "red",
+    #     [pct_diff(bs[SEG_HAVERSINE_DIST], 
+    #               bs[SEG_TP_DIST]) for bs in base_segments], "% Dist Diff",          "green", 
+    # )
+
+    # diagnostic_make_plot(
+    #     "Elevation and Grade Profile",
+    #     [bs[SEG_START_DIST] for bs in base_segments],  "Distance (meters)",
+    #     [bs[SEG_START_ELEV] for bs in base_segments], "Elevation (meters)", "blue", 
+    #     [bs[SEG_START_ELEV] for bs in base_segments],  "Start Elevation (meters)", "red", 
+    # )
 
     diagnostic_make_plot(
         "Elevation and Grade Profile",
-        [bs[seg_start_distance] for bs in base_segments],                           "Distance (meters)",
-        [bs[seg_start_elevation] - bs[seg_end_elevation] for bs in base_segments],  "Delta Elevation (meters)", "blue", 
-        [bs[seg_start_elevation] for bs in base_segments],                          "Start Elevation (meters)", "red", 
+        [bs.start_distance for bs in base_segments],                     "Distance (meters)",
+        [bs.start_elevation - bs.end_elevation for bs in base_segments], "Delta Elevation (meters)", "blue", 
+        [bs.grade for bs in base_segments],                              "Grade", "green", 
     )
 
-    diagnostic_make_plot(
-        "Two Y-Axes Example",
-        [1, 2, 3, 4, 5],        "X-Axis",
-        [50, 40, 30, 20, 10],   "Y1 (Blue)",    "blue", 
-        [5, 15, 25, 35, 45],    "Y2 (Red)",     "red",  
-    )
+    # diagnostic_make_plot(
+    #     "Two Y-Axes Example",
+    #     [1, 2, 3, 4, 5],        "X-Axis",
+    #     [50, 40, 30, 20, 10],   "Y1 (Blue)",    "blue", 
+    #     [5, 15, 25, 35, 45],    "Y2 (Red)",     "red",  
+    # )
 
-    diagnostic_make_plot(
-        "Three Y-Axes Example",
-        [ 1,  2,  3,  4,  5],   "X-Axis",
-        [50, 40, 30, 20, 10],   "Y1 (Blue)",    "red",  
-        [ 5, 15, 25, 35, 45],   "Y2 (Green)",   "green", 
-        [ 1,  1,  1,  1,  1],   "Y3 (Orange)",  "orange",
-    )
+    # diagnostic_make_plot(
+    #     "Three Y-Axes Example",
+    #     [ 1,  2,  3,  4,  5],   "X-Axis",
+    #     [50, 40, 30, 20, 10],   "Y1 (Blue)",    "red",  
+    #     [ 5, 15, 25, 35, 45],   "Y2 (Green)",   "green", 
+    #     [ 1,  1,  1,  1,  1],   "Y3 (Orange)",  "orange",
+    # )
+
+    # Merge segments by similar grade
+    common_grade_segments = merge_segments_by_similar_grade(base_segments)
+
+    # diagnostic_print_list("Common Grade Segments", common_grade_segments) -- too long -- not helpful
+
+    # Summarize the common grade segments
+    summarize_common_grade_segments(common_grade_segments)
+
+    
+    # Plot the common grade segments
+    plot_common_grade_segments(common_grade_segments)
 
     plt.show()
 
-
-#     # Find steepest segments
-#     segments, grades, haversine_distances, distance_meters = find_steepest_segments(
-#         trackpoints, namespace,
-#         min_distance=args.min_distance,
-#         grade_delta=args.grade_delta,
-#         min_grade=args.min_grade
-#     )
-
-#     # Output the results
-#     output_segments(segments)
-
-#     # Thresholds
-#     MAX_GRADE_THRESHOLD = 25  # in percentage
-#     DISTANCE_DIFF_THRESHOLD = 0.02  # 2% difference
-
-#     # Extract elevations, latitudes, and longitudes using list comprehensions
-#     elevations = [float(tp.find("ns:AltitudeMeters", namespace).text) for tp in trackpoints]
-#     latitudes = [float(tp.find("ns:Position/ns:LatitudeDegrees", namespace).text) for tp in trackpoints]
-#     longitudes = [float(tp.find("ns:Position/ns:LongitudeDegrees", namespace).text) for tp in trackpoints]
-
-#     # Iterate through the data points
-#     min_length = min(len(grades), len(haversine_distances), len(distance_meters), len(latitudes), len(longitudes))
-
-#     questionable_grades = [
-#         (i, grades[i], latitudes[i], longitudes[i])
-#         for i in range(min_length)
-#         if grades[i] > MAX_GRADE_THRESHOLD
-#     ]
-
-#     questionable_distances = [
-#         (
-#             i,
-#             haversine_distances[i],
-#             distance_meters[i],
-#             abs(haversine_distances[i] - distance_meters[i]) / distance_meters[i] * 100,
-#             latitudes[i],
-#             longitudes[i],
-#         )
-#         for i in range(min_length)
-#         if abs(haversine_distances[i] - distance_meters[i]) / distance_meters[i] > DISTANCE_DIFF_THRESHOLD
-#     ]
-
-#     # Log questionable grades
-#     if questionable_grades:
-#         print("Questionable Grades (Index, Grade, Latitude, Longitude):")
-#         for index, grade, lat, lon in questionable_grades:
-#             print(f"Index: {index}, Grade: {grade:.2f}%, Latitude: {lat:.6f}, Longitude: {lon:.6f}")
-
-#     # Write questionable distances to a file
-#     if questionable_distances:
-#         with open("questionable_distances.txt", "w") as f:
-#             f.write("Index, Haversine Distance, DistanceMeters, Percent Difference, Latitude, Longitude\n")
-#             for index, haversine_distance, distance_meters, percent_diff, lat, lon in questionable_distances:
-#                 f.write(f"{index}, {haversine_distance:.2f}, {distance_meters:.2f}, {percent_diff:.2f}%, {lat:.6f}, {lon:.6f}\n")
-#     print("\nQuestionable distances have been written to 'questionable_distances.txt'.")
-
-    # make_plot(base_segments)
